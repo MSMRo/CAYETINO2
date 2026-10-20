@@ -1,0 +1,10 @@
+[project]
+name = "cayetino2"
+version = "2.0.0"
+description = "Generador de Señales Analógicas Biomédicas ESP32 con JavaScript y Web Serial"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+serve = "run_server:main"

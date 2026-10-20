@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cayetino - Generador de Señales Biomédicas ESP32 (Web Serial)</title>
+  <meta name="description" content="Plataforma de generación de señales biomédicas y sintéticas para ESP32 mediante Web Serial API y almacenamiento en LittleFS.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Chart.js para visualización fluida de biopotenciales a 60 FPS -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- ====================================================================
+         BARRA LATERAL IZQUIERDA (SIDEBAR)
+         ==================================================================== -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-row">
+          <div class="brand-icon">⚡</div>
+          <div>
+            <div style="display:flex; align-items:center;">
+              <span class="brand-title">CAYETINO</span>
+              <span class="brand-badge">WEB SERIAL</span>
+            </div>
+            <div class="brand-subtitle">Generador Biomédico & DAC ESP32</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-content">
+        <!-- Modo Simulación Virtual -->
+        <div class="toggle-card">
+          <div class="toggle-label-wrap">
+            <span class="toggle-title">🧪 Modo Simulación</span>
+            <span class="toggle-desc">Prueba sin conectar hardware físico</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="chk-simulation">
+            <span class="slider-round"></span>
+          </label>
+        </div>
+
+        <!-- Tarjeta de Conexión Serial -->
+        <div class="sidebar-section">
+          <span class="sidebar-title">🔌 Enlace de Comunicación</span>
+          <div class="connection-card">
+            <div class="status-indicator-bar" id="status-bar">
+              <span class="status-dot" id="status-dot"></span>
+              <span class="status-text" id="status-text">Desconectado</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="sel-baudrate">Baudrate:</label>
+              <select id="sel-baudrate" class="form-select">
+                <option value="115200" selected>115200 (Estándar Cayetino)</option>
+                <option value="921600">921600 (Ultra Alta Velocidad)</option>
+                <option value="57600">57600</option>
+              </select>
+            </div>
+
+            <div style="display:flex; align-items:flex-start; gap:8px; margin: 2px 0 4px 0;">
+              <input type="checkbox" id="chk-usb-only" checked style="cursor:pointer; accent-color:var(--primary); width:16px; height:16px; margin-top:1px;">
+              <label for="chk-usb-only" style="font-size:0.75rem; color:var(--text-secondary); cursor:pointer; user-select:none; line-height:1.3; font-weight:500;">
+                Solo puertos USB físicos (oculta Bluetooth)
+              </label>
+            </div>
+
+            <button id="btn-connect" class="btn btn-primary" type="button">
+              <span>🔗 Conectar ESP32</span>
+            </button>
+            <button id="btn-disconnect" class="btn btn-outline btn-sm" type="button" style="display: none;">
+              <span>❌ Desconectar</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Configuración del Pin DAC -->
+        <div class="sidebar-section">
+          <span class="sidebar-title">⚙️ Salida Analógica DAC</span>
+          <div class="radio-tile-group">
+            <div class="radio-tile active" id="tile-dac-25" data-pin="25">
+              <span class="radio-tile-title">GPIO 25</span>
+              <span class="radio-tile-sub">DAC Canal 1</span>
+            </div>
+            <div class="radio-tile" id="tile-dac-26" data-pin="26">
+              <span class="radio-tile-title">GPIO 26</span>
+              <span class="radio-tile-sub">DAC Canal 2</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mantenimiento de LittleFS -->
+        <div class="sidebar-section">
+          <span class="sidebar-title">🛠️ Memoria Flash LittleFS</span>
+          <button id="btn-format-fs" class="btn btn-outline btn-sm" type="button">
+            <span>⚠️ Formatear LittleFS</span>
+          </button>
+        </div>
+
+        <!-- Registro Serial (Logs) -->
+        <div class="sidebar-section" style="margin-top: auto;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="sidebar-title">📟 Terminal Serial</span>
+            <button id="btn-toggle-log" class="btn btn-outline btn-sm" style="padding: 2px 8px; font-size:0.7rem;">Ver</button>
+          </div>
+          <div id="log-drawer" class="log-drawer" style="display:none;">
+            <div id="log-content">Esperando conexión...</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ====================================================================
+         CONTENEDOR PRINCIPAL DERECHO (MAIN CONTENT)
+         ==================================================================== -->
+    <main class="main-content">
+      <!-- Barra Superior Fija (Header + Barra de Pestañas Siempre Visible) -->
+      <div class="sticky-top-bar">
+        <!-- Encabezado Superior -->
+        <header class="top-header">
+          <div class="header-left">
+            <h1 class="page-title">
+              <span>⚡ Proyecto CAYETINO</span>
+            </h1>
+            <p class="page-subtitle">Generador de Señales Analógicas Biomédicas y Sintéticas vía DAC y LittleFS del ESP32</p>
+          </div>
+          <div class="header-right">
+            <div id="live-playback-pill" class="live-status-pill idle">
+              <span class="status-dot" id="live-dot"></span>
+              <span id="live-playback-text">DAC en Nivel Neutro (~1.65 V) | GPIO 25</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Barra de Pestañas (Tabs) Siempre Visible -->
+        <nav class="nav-tabs-wrapper">
+          <button class="tab-btn active" data-tab="tab-basic">
+            <span>📊 Modo Básico (Ondas Periódicas)</span>
+          </button>
+          <button class="tab-btn" data-tab="tab-advanced">
+            <span>🧬 Modo Avanzado (Biomédico & Ruido)</span>
+          </button>
+          <button class="tab-btn" data-tab="tab-upload">
+            <span>📂 Cargar Archivo Externo</span>
+          </button>
+          <button class="tab-btn" data-tab="tab-manager">
+            <span>💾 Gestor LittleFS & Control DAC</span>
+          </button>
+          <button class="tab-btn" data-tab="tab-guide">
+            <span>🔌 Hardware & Guía Biomédica</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Contenedor de Vistas de Pestañas -->
+      <div class="tab-pane-container">
+
+        <!-- ==============================================================
+             PESTAÑA 1: MODO BÁSICO (ONDAS PERIÓDICAS)
+             ============================================================== -->
+        <section id="tab-basic" class="tab-pane active">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">📊 Generador de Formas de Onda Básicas</h2>
+                <p class="card-subtitle">Diseña formas de onda periódicas y envíalas a la memoria Flash del ESP32 para emisión continua por el DAC.</p>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <!-- Columna 1: Parámetros de Onda -->
+              <div style="display:flex; flex-direction:column; gap:16px;">
+                <div class="form-group">
+                  <label class="form-label" for="basic-wave-type">Forma de Onda:</label>
+                  <select id="basic-wave-type" class="form-select">
+                    <option value="senoidal" selected>Senoidal</option>
+                    <option value="triangulo">Triángulo</option>
+                    <option value="cuadrada">Cuadrada</option>
+                    <option value="diente_sierra">Diente de Sierra</option>
+                    <option value="diente_sierra_inv">Diente de Sierra Invertida</option>
+                  </select>
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-label-row">
+                    <label class="form-label">Frecuencia de Señal (Hz):</label>
+                    <span id="basic-freq-val" class="slider-val-badge">5.0 Hz</span>
+                  </div>
+                  <input type="range" id="basic-freq" min="0.5" max="200" step="0.5" value="5">
+                </div>
+
+                <div class="grid-2">
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Amplitud (0.1 - 1.0):</label>
+                      <span id="basic-amp-val" class="slider-val-badge">1.00</span>
+                    </div>
+                    <input type="range" id="basic-amp" min="0.1" max="1.0" step="0.05" value="1.0">
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Offset DC:</label>
+                      <span id="basic-offset-val" class="slider-val-badge">0.00</span>
+                    </div>
+                    <input type="range" id="basic-offset" min="-1.0" max="1.0" step="0.05" value="0.0">
+                  </div>
+                </div>
+
+                <div id="basic-duty-row" class="slider-group" style="display:none;">
+                  <div class="slider-label-row">
+                    <label class="form-label">Ciclo de Trabajo (Duty Cycle):</label>
+                    <span id="basic-duty-val" class="slider-val-badge">50%</span>
+                  </div>
+                  <input type="range" id="basic-duty" min="0.05" max="0.95" step="0.05" value="0.5">
+                </div>
+              </div>
+
+              <!-- Columna 2: Frecuencia de Muestreo y Métricas -->
+              <div style="display:flex; flex-direction:column; gap:16px;">
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="basic-fs">Frecuencia de Muestreo (Fs):</label>
+                    <select id="basic-fs" class="form-select">
+                      <option value="250">250 Hz</option>
+                      <option value="500" selected>500 Hz</option>
+                      <option value="1000">1000 Hz</option>
+                      <option value="2000">2000 Hz</option>
+                      <option value="5000">5000 Hz</option>
+                    </select>
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Ventana T (segundos):</label>
+                      <span id="basic-duration-val" class="slider-val-badge">2.0 s</span>
+                    </div>
+                    <input type="range" id="basic-duration" min="0.2" max="10" step="0.2" value="2.0">
+                  </div>
+                </div>
+
+                <div class="grid-3" style="margin-top:auto;">
+                  <div class="metric-box">
+                    <span class="metric-title">Total Muestras</span>
+                    <span id="basic-metric-samples" class="metric-value">1,000</span>
+                    <span class="metric-sub">Puntos en memoria</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-title">Período de Muestreo</span>
+                    <span id="basic-metric-dt" class="metric-value">2.0 ms</span>
+                    <span class="metric-sub">Intervalo Δt</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-title">Ciclos en Ventana</span>
+                    <span id="basic-metric-cycles" class="metric-value">10.0</span>
+                    <span class="metric-sub">Repeticiones</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gráficos de Onda Básica -->
+          <div class="grid-2">
+            <div class="chart-container">
+              <div class="chart-header">
+                <span class="chart-title">📈 Tensión Analógica Salida DAC (0.0 V - 3.3 V)</span>
+              </div>
+              <canvas id="chart-basic-voltage" class="chart-canvas"></canvas>
+            </div>
+            <div class="chart-container">
+              <div class="chart-header">
+                <span class="chart-title">🔢 Valores Digitales Cuantizados DAC 8-Bit (0 - 255)</span>
+              </div>
+              <canvas id="chart-basic-dac" class="chart-canvas"></canvas>
+            </div>
+          </div>
+
+          <!-- Barra de Guardado en ESP32 -->
+          <div class="save-bar-card">
+            <div class="save-inputs">
+              <div class="form-group" style="flex: 2;">
+                <label class="form-label" for="basic-filename">Nombre de Archivo en ESP32:</label>
+                <input type="text" id="basic-filename" class="form-control" value="senoidal_5hz">
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label class="form-label" for="basic-ext">Extensión:</label>
+                <select id="basic-ext" class="form-select">
+                  <option value=".csv" selected>.csv</option>
+                  <option value=".txt">.txt</option>
+                  <option value=".dat">.dat</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <button id="btn-download-basic" class="btn btn-outline" type="button" title="Descargar archivo en tu PC">
+                <span>⬇️ Descargar</span>
+              </button>
+              <button id="btn-save-basic" class="btn btn-primary" type="button">
+                <span>🚀 Enviar y Guardar en ESP32</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             PESTAÑA 2: MODO AVANZADO (BIOMÉDICO & RUIDO)
+             ============================================================== -->
+        <section id="tab-advanced" class="tab-pane">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">🧬 Síntesis Biomédica Fisiológica</h2>
+                <p class="card-subtitle">Genera señales electrocardiográficas, electromiográficas, encefalográficas y oximétricas con inyección de ruido clínico real.</p>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <!-- Configuración Fisiológica -->
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <div class="form-group">
+                  <label class="form-label" for="adv-bio-type">Tipo de Señal Fisiológica:</label>
+                  <select id="adv-bio-type" class="form-select">
+                    <option value="ekg" selected>EKG / ECG (Electrocardiograma - PQRST)</option>
+                    <option value="emg">EMG (Electromiografía - Ráfagas Musculares)</option>
+                    <option value="eeg">EEG (Electroencefalograma - Ritmos α, β, θ, 1/f)</option>
+                    <option value="rsp">RSP (Señal Respiratoria Asimétrica)</option>
+                    <option value="ppg">PPG (Fotopletismografía / Pulso de Oximetría)</option>
+                  </select>
+                </div>
+
+                <!-- Control específico EKG/PPG: Heart Rate -->
+                <div id="adv-hr-group" class="slider-group">
+                  <div class="slider-label-row">
+                    <label class="form-label">Frecuencia Cardíaca (BPM):</label>
+                    <span id="adv-hr-val" class="slider-val-badge">72 BPM</span>
+                  </div>
+                  <input type="range" id="adv-hr" min="40" max="180" step="1" value="72">
+                </div>
+
+                <!-- Controles específicos EMG: Bursts -->
+                <div id="adv-emg-group" class="grid-2" style="display:none;">
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Contracciones (Bursts):</label>
+                      <span id="adv-bursts-val" class="slider-val-badge">3</span>
+                    </div>
+                    <input type="range" id="adv-bursts" min="1" max="8" step="1" value="3">
+                  </div>
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Duración Ráfaga (s):</label>
+                      <span id="adv-burst-dur-val" class="slider-val-badge">0.6 s</span>
+                    </div>
+                    <input type="range" id="adv-burst-dur" min="0.2" max="1.5" step="0.1" value="0.6">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Muestreo y Métricas -->
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="adv-fs">Frecuencia de Muestreo (Fs):</label>
+                    <select id="adv-fs" class="form-select">
+                      <option value="250" selected>250 Hz (Estándar EKG clínico)</option>
+                      <option value="500">500 Hz (Diagnóstico de alta resolución)</option>
+                      <option value="1000">1000 Hz (Recomendado para EMG)</option>
+                      <option value="2000">2000 Hz</option>
+                    </select>
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-label-row">
+                      <label class="form-label">Ventana T (segundos):</label>
+                      <span id="adv-duration-val" class="slider-val-badge">5.0 s</span>
+                    </div>
+                    <input type="range" id="adv-duration" min="1.0" max="12.0" step="0.5" value="5.0">
+                  </div>
+                </div>
+
+                <div class="grid-3" style="margin-top:auto;">
+                  <div class="metric-box">
+                    <span class="metric-title">Muestras</span>
+                    <span id="adv-metric-samples" class="metric-value">1,250</span>
+                    <span class="metric-sub">Puntos de datos</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-title">Memoria Flash</span>
+                    <span id="adv-metric-flash" class="metric-value">~7.3 KB</span>
+                    <span class="metric-sub">Tamaño estimado</span>
+                  </div>
+                  <div class="metric-box">
+                    <span class="metric-title">Complejos QRS</span>
+                    <span id="adv-metric-beats" class="metric-value">6</span>
+                    <span class="metric-sub">Latidos en ventana</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Inyección de Ruido Clínico -->
+            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-light);">
+              <h3 style="font-size: 0.95rem; font-weight:700; color: var(--primary-dark); margin-bottom: 12px;">
+                🌫️ Inyección de Ruido y Contaminación Electromagnética
+              </h3>
+              <div class="grid-3">
+                <!-- Ruido 1: Interferencia de Red -->
+                <div class="metric-box" style="background:#FFFFFF;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:700; font-size:0.85rem; color:#1E3A8A;">⚡ Red Eléctrica (60/50 Hz)</span>
+                    <input type="checkbox" id="chk-noise-sine">
+                  </div>
+                  <div id="noise-sine-controls" style="display:none; flex-direction:column; gap:8px;">
+                    <div class="slider-label-row">
+                      <span style="font-size:0.75rem; color:var(--text-muted);">Amplitud armónica:</span>
+                      <span id="noise-sine-amp-val" class="slider-val-badge">0.25</span>
+                    </div>
+                    <input type="range" id="noise-sine-amp" min="0.05" max="0.8" step="0.05" value="0.25">
+                    <div style="display:flex; gap:8px; margin-top:4px;">
+                      <button id="btn-freq-60" class="btn btn-outline btn-sm active" type="button" style="flex:1;">60 Hz (Perú/América)</button>
+                      <button id="btn-freq-50" class="btn btn-outline btn-sm" type="button" style="flex:1;">50 Hz (Europa)</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Ruido 2: Ruido Blanco Gaussiano -->
+                <div class="metric-box" style="background:#FFFFFF;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:700; font-size:0.85rem; color:#1E3A8A;">🌫️ Ruido Blanco Térmico</span>
+                    <input type="checkbox" id="chk-noise-white">
+                  </div>
+                  <div id="noise-white-controls" style="display:none; flex-direction:column; gap:8px;">
+                    <div class="slider-label-row">
+                      <span style="font-size:0.75rem; color:var(--text-muted);">Desviación (σ):</span>
+                      <span id="noise-white-amp-val" class="slider-val-badge">0.08</span>
+                    </div>
+                    <input type="range" id="noise-white-amp" min="0.02" max="0.35" step="0.02" value="0.08">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">Modela el ruido térmico de electrodo y circuitería analógica.</span>
+                  </div>
+                </div>
+
+                <!-- Ruido 3: Ruido Impulsional / Spikes -->
+                <div class="metric-box" style="background:#FFFFFF;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:700; font-size:0.85rem; color:#1E3A8A;">📍 Artefactos de Movimiento</span>
+                    <input type="checkbox" id="chk-noise-impulse">
+                  </div>
+                  <div id="noise-impulse-controls" style="display:none; flex-direction:column; gap:8px;">
+                    <div class="slider-label-row">
+                      <span style="font-size:0.75rem; color:var(--text-muted);">Probabilidad de spikes:</span>
+                      <span id="noise-impulse-prob-val" class="slider-val-badge">0.8%</span>
+                    </div>
+                    <input type="range" id="noise-impulse-prob" min="0.2" max="3.0" step="0.2" value="0.8">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">Picos abruptos causados por movimiento del paciente.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gráficos del Modo Avanzado -->
+          <div class="grid-2">
+            <div class="chart-container">
+              <div class="chart-header">
+                <span class="chart-title">🟢 Comparativa: Señal Fisiológica Limpia vs. Contaminada</span>
+              </div>
+              <canvas id="chart-adv-comparison" class="chart-canvas"></canvas>
+            </div>
+            <div class="chart-container">
+              <div class="chart-header">
+                <span class="chart-title">⚡ Tensión Analógica Salida DAC (0.0 V - 3.3 V)</span>
+              </div>
+              <canvas id="chart-adv-dac" class="chart-canvas"></canvas>
+            </div>
+          </div>
+
+          <!-- Espectro FFT de Potencia -->
+          <div class="chart-container">
+            <div class="chart-header">
+              <span class="chart-title">📊 Densidad Espectral de Amplitud (FFT) - Detección de Armónicos</span>
+              <span style="font-size:0.75rem; color:var(--text-muted);">Permite comprobar visualmente el pico contaminante a 60 Hz</span>
+            </div>
+            <canvas id="chart-adv-fft" style="width:100% !important; max-height:200px;"></canvas>
+          </div>
+
+          <!-- Barra de Guardado Señal Biomédica -->
+          <div class="save-bar-card">
+            <div class="save-inputs">
+              <div class="form-group" style="flex: 2;">
+                <label class="form-label" for="adv-filename">Nombre de Archivo Biomédico:</label>
+                <input type="text" id="adv-filename" class="form-control" value="ekg_72bpm_5s">
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label class="form-label" for="adv-ext">Extensión:</label>
+                <select id="adv-ext" class="form-select">
+                  <option value=".csv" selected>.csv</option>
+                  <option value=".txt">.txt</option>
+                  <option value=".dat">.dat</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <button id="btn-download-adv" class="btn btn-outline" type="button" title="Descargar archivo en tu PC">
+                <span>⬇️ Descargar</span>
+              </button>
+              <button id="btn-save-adv" class="btn btn-primary" type="button">
+                <span>🚀 Enviar y Guardar en ESP32</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             PESTAÑA 3: CARGAR ARCHIVO EXTERNO (CUSTOM FILE IMPORT)
+             ============================================================== -->
+        <section id="tab-upload" class="tab-pane">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">📂 Carga de Archivos de Señal Externos</h2>
+                <p class="card-subtitle">Sube cualquier archivo de señal (.csv, .txt, .dat) desde tu computadora. El sistema lo cuantizará a 8 bits y lo transmitirá al ESP32 para reproducirlo por el DAC.</p>
+              </div>
+            </div>
+
+            <!-- Zona Drag and Drop -->
+            <div id="dropzone" class="dropzone">
+              <input type="file" id="file-input" accept=".csv,.txt,.dat" style="display: none;">
+              <div class="dropzone-icon">📁</div>
+              <div class="dropzone-text">Arrastra y suelta tu archivo de señal aquí</div>
+              <div class="dropzone-sub">o haz clic para explorar en tu equipo (Soporta .csv, .txt, .dat)</div>
+              <button class="btn btn-outline btn-sm" type="button" onclick="document.getElementById('file-input').click();">
+                Seleccionar Archivo
+              </button>
+            </div>
+
+            <!-- Datos del Archivo Cargado -->
+            <div id="upload-details" style="display:none; margin-top: 24px;">
+              <div class="grid-4" style="margin-bottom: 20px;">
+                <div class="metric-box">
+                  <span class="metric-title">Archivo Cargado</span>
+                  <span id="up-metric-name" class="metric-value" style="font-size:1.05rem; word-break:break-all;">señal.csv</span>
+                  <span id="up-metric-size" class="metric-sub">0 KB</span>
+                </div>
+                <div class="metric-box">
+                  <span class="metric-title">Muestras Detectadas</span>
+                  <span id="up-metric-samples" class="metric-value">0</span>
+                  <span class="metric-sub">Puntos de datos</span>
+                </div>
+                <div class="metric-box">
+                  <span class="metric-title">Frecuencia Fs</span>
+                  <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+                    <input type="number" id="up-custom-fs" class="form-control" value="250" style="padding:4px 8px; width:90px;">
+                    <span style="font-size:0.8rem; font-weight:700;">Hz</span>
+                  </div>
+                  <span class="metric-sub">Editable si no está en cabecera</span>
+                </div>
+                <div class="metric-box">
+                  <span class="metric-title">Duración Total</span>
+                  <span id="up-metric-duration" class="metric-value">0.0 s</span>
+                  <span class="metric-sub">Tiempo en bucle</span>
+                </div>
+              </div>
+
+              <!-- Gráfica de Previsualización -->
+              <div class="chart-container">
+                <div class="chart-header">
+                  <span class="chart-title">📈 Previsualización de la Señal Cuantizada para DAC (0.0 V - 3.3 V)</span>
+                </div>
+                <canvas id="chart-upload-preview" class="chart-canvas"></canvas>
+              </div>
+
+              <!-- Acciones de Transferencia y Reproducción -->
+              <div class="save-bar-card" style="margin-top: 16px;">
+                <div class="save-inputs">
+                  <div class="form-group" style="flex: 2;">
+                    <label class="form-label" for="up-target-filename">Guardar en LittleFS como:</label>
+                    <input type="text" id="up-target-filename" class="form-control" value="mi_señal_cargada.csv">
+                  </div>
+                </div>
+                <div style="display:flex; gap:10px;">
+                  <button id="btn-upload-save-only" class="btn btn-outline" type="button">
+                    <span>💾 Solo Guardar en Flash</span>
+                  </button>
+                  <button id="btn-upload-and-play" class="btn btn-success" type="button">
+                    <span>🚀 Cargar y Reproducir por DAC</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             PESTAÑA 4: GESTOR LITTLEFS & CONTROL DAC
+             ============================================================== -->
+        <section id="tab-manager" class="tab-pane">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">💾 Gestor de Archivos en LittleFS & Control DAC</h2>
+                <p class="card-subtitle">Administra los archivos almacenados en la memoria Flash del ESP32 y selecciona cuál emitir por el DAC en bucle analógico.</p>
+              </div>
+              <button id="btn-refresh-files" class="btn btn-outline btn-sm" type="button">
+                <span>🔄 Actualizar Lista</span>
+              </button>
+            </div>
+
+            <!-- Tabla de Archivos en Memoria Flash -->
+            <div class="table-responsive">
+              <table class="table-modern" id="table-files">
+                <thead>
+                  <tr>
+                    <th>Archivo</th>
+                    <th>Fs (Hz)</th>
+                    <th>Muestras</th>
+                    <th>Duración (s)</th>
+                    <th>Tamaño Flash</th>
+                    <th style="text-align: right;">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="table-files-body">
+                  <tr>
+                    <td colspan="6" style="text-align:center; padding: 28px; color: var(--text-muted);">
+                      Conecta el ESP32 para listar los archivos guardados en LittleFS o activa el Modo Simulación.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Panel de Control del DAC -->
+            <div style="margin-top: 24px; padding: 20px; background-color: var(--bg-card-subtle); border-radius: var(--radius-md); border: 1px solid var(--border-light);">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+                <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:280px;">
+                  <label class="form-label" style="margin:0; white-space:nowrap;">Archivo Seleccionado:</label>
+                  <select id="sel-active-file" class="form-select" style="max-width:320px;">
+                    <option value="">(Ningún archivo seleccionado)</option>
+                  </select>
+                </div>
+
+                <div style="display:flex; gap:10px;">
+                  <button id="btn-play-file" class="btn btn-success" type="button">
+                    <span>▶️ REPRODUCIR (PLAY)</span>
+                  </button>
+                  <button id="btn-stop-file" class="btn btn-danger" type="button">
+                    <span>⏹️ DETENER (STOP)</span>
+                  </button>
+                  <button id="btn-delete-file" class="btn btn-outline" type="button" style="color:var(--danger);">
+                    <span>🗑️ Eliminar</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Diagnóstico Directo de Hardware -->
+            <div style="margin-top: 20px; padding: 18px; border: 1px dashed var(--border-light); border-radius: var(--radius-md); display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <span style="font-weight:700; font-size:0.9rem; color:var(--primary-dark);">🔬 Prueba Directa de Hardware (Autodiagnóstico)</span>
+                <p style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
+                  Genera una onda senoidal de 5 Hz (0 - 3.3V) directamente desde la RAM del ESP32 sin leer la memoria Flash, perfecta para comprobar el DAC con el osciloscopio.
+                </p>
+              </div>
+              <button id="btn-test-sine" class="btn btn-outline btn-sm" type="button">
+                <span>🧪 Probar DAC Seno 5 Hz</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================================
+             PESTAÑA 5: HARDWARE & GUÍA BIOMÉDICA
+             ============================================================== -->
+        <section id="tab-guide" class="tab-pane">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">🔌 Conexión de Hardware y Circuito Atenuador</h2>
+                <p class="card-subtitle">Guía de conexionado para conectar el ESP32 a electrocardiógrafos, amplificadores de instrumentación y osciloscopios de forma segura.</p>
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div>
+                <h3 style="font-size:1.0rem; font-weight:700; color:var(--primary-dark); margin-bottom:10px;">
+                  1. Salida Directa del DAC del ESP32
+                </h3>
+                <ul style="padding-left:20px; line-height:1.7; font-size:0.88rem; color:var(--text-secondary);">
+                  <li><b>Resolución</b>: 8 bits discretos (256 niveles: 0 a 255).</li>
+                  <li><b>Rango de Tensión</b>: 0.0 V a 3.3 V.</li>
+                  <li><b>Pines de salida DAC</b>:
+                    <ul>
+                      <li><b>DAC 1</b>: <code>GPIO 25</code> (Predeterminado)</li>
+                      <li><b>DAC 2</b>: <code>GPIO 26</code></li>
+                      <li><b>Referencia</b>: <code>GND</code></li>
+                    </ul>
+                  </li>
+                  <li>Para conectar a un osciloscopio: sonda positiva a <code>GPIO 25</code> y caimán de tierra a <code>GND</code>.</li>
+                </ul>
+
+                <h3 style="font-size:1.0rem; font-weight:700; color:var(--primary-dark); margin-top:20px; margin-bottom:10px;">
+                  2. ¿Por qué se requiere un circuito atenuador?
+                </h3>
+                <p style="font-size:0.88rem; color:var(--text-secondary); line-height:1.6;">
+                  Los biopotenciales humanos son de muy bajo voltaje:
+                  <b>EKG: 1 - 3 mV</b>, <b>EMG: 0.1 - 5 mV</b>, <b>EEG: 10 - 100 µV</b>.
+                  Dado que el DAC del ESP32 emite 3.3 V, si se conecta directamente a un amplificador de instrumentación (ej. AD620 o INA128 con ganancia G = 1000), saturaría de inmediato. Se utiliza un <b>divisor resistivo pasivo 1:1000</b>.
+                </p>
+              </div>
+
+              <div>
+                <h3 style="font-size:1.0rem; font-weight:700; color:var(--primary-dark); margin-bottom:10px;">
+                  3. Diagrama Esquemático del Divisor Atenuador
+                </h3>
+                <div style="background:#0F172A; color:#38BDF8; padding:16px; border-radius:var(--radius-md); font-family:monospace; font-size:0.8rem; line-height:1.4;">
+ESP32 GPIO 25 (0 - 3.3V)
+       │
+      ┌┴┐
+      │ │  R1 = 10 kΩ  (10,000 Ω)
+      └┬┘
+       │
+       ├───────────────────> Salida Atenuada (+) [~ 3.3 mV]
+       │                     Hacia electrodo EKG / Amplificador AD620
+      ┌┴┐
+      │ │  R2 = 10 Ω
+      └┬┘
+       │
+ESP32 GND ─────────────────> Tierra de Referencia (-) GND
+                </div>
+                <div style="margin-top:14px; background:var(--bg-card-subtle); padding:12px; border-radius:var(--radius-sm); border:1px solid var(--border-light);">
+                  <span style="font-weight:700; font-size:0.85rem; color:var(--primary-dark);">Fórmula de Atenuación:</span>
+                  <div style="font-family:monospace; font-size:0.95rem; margin-top:4px; color:#1E3A8A;">
+                    V_out = V_DAC × [ R2 / (R1 + R2) ] = 3.3V × (10 / 10010) ≈ 3.3 mV
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Código Firmware ESP32 Embebido -->
+            <div style="margin-top:30px; border-top:1px solid var(--border-light); padding-top:20px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="font-size:1.0rem; font-weight:700; color:var(--primary-dark);">
+                  💾 Firmware Cayetino para ESP32 (Arduino IDE)
+                </h3>
+                <div style="display:flex; gap:10px;">
+                  <button id="btn-copy-firmware" class="btn btn-outline btn-sm" type="button">
+                    <span>📋 Copiar Código</span>
+                  </button>
+                  <a href="firmware/cayetino_esp32.ino" download="cayetino_esp32.ino" class="btn btn-primary btn-sm">
+                    <span>⬇️ Descargar cayetino_esp32.ino</span>
+                  </a>
+                </div>
+              </div>
+              <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:10px;">
+                Flashea este sketch en tu placa ESP32 con Arduino IDE (selecciona placa <i>ESP32 Dev Module</i> y partición <i>Default with LittleFS</i> o estándar).
+              </p>
+              <textarea id="firmware-code-box" readonly style="width:100%; height:220px; font-family:'Courier New', monospace; font-size:0.75rem; background:#F8FAFC; border:1px solid var(--border-light); border-radius:var(--radius-sm); padding:12px; color:#334155; resize:vertical;"></textarea>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ======================================================================
+       MODAL DE PROGRESO DE TRANSMISIÓN A LITTLEFS
+       ====================================================================== -->
+  <div id="modal-progress" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-title" id="modal-progress-title">Transmitiendo a LittleFS...</div>
+      <p id="modal-progress-desc" style="font-size:0.85rem; color:var(--text-secondary);">
+        Enviando bloques de señal con verificación ACK por Web Serial...
+      </p>
+      <div class="progress-container">
+        <div id="modal-progress-bar" class="progress-fill"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:0.8rem; font-weight:700; color:var(--text-muted);">
+        <span id="modal-progress-text">0%</span>
+        <span id="modal-progress-samples">0 / 0 muestras</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contenedor de Notificaciones Flotantes (Toasts) -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Scripts de la Aplicación -->
+  <script src="js/signal.js"></script>
+  <script src="js/serial.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
