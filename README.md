@@ -2,6 +2,8 @@
 
 Plataforma web de última generación para la síntesis, diseño, carga y emisión analógica continua de biopotenciales (**EKG, EMG, EEG, RSP, PPG**) y formas de onda periódicas en microcontroladores **ESP32** utilizando la **Web Serial API** y almacenamiento no volátil **LittleFS**.
 
+![](./imgs/Screenshot%202026-10-19%20231729.png)
+
 Diseñado para ejecutarse 100% en el navegador y alojarse directamente en **GitHub Pages**, sin necesidad de instalar Python, controladores adicionales o servidores backend.
 
 ---
